@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>NotePin #14 — BUTTER</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: #14120f; color: #f4efe6; }
+    body { display: flex; flex-direction: column; font: 16px/1.35 Georgia, serif; }
+    header {
+      display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+      padding: calc(8px + env(safe-area-inset-top)) 12px 8px;
+      background: #14120f;
+    }
+    .brand { margin: 0; font-size: 15px; letter-spacing: .16em; font-weight: 400; }
+    .brand b { color: #ffe14a; font-weight: 400; }
+    .status { margin: 0; color: #a3988c; font: 12px/1.2 Verdana, sans-serif; text-align: right; }
+    #board { flex: 1; overflow: auto; position: relative;
+      background-color: #1c1915;
+      background-image: radial-gradient(rgba(255,255,255,.07) 1px, transparent 1px);
+      background-size: 18px 18px;
+    }
+    #sheet { position: relative; min-height: 100%; }
+    .note {
+      position: absolute; width: min(88vw, 320px); min-height: 168px;
+      display: flex; flex-direction: column;
+      border-radius: 2px 16px 3px 3px;
+      box-shadow: 0 12px 26px rgba(0,0,0,.38);
+    }
+    .note.on { outline: 2px solid #fffdf6; outline-offset: 2px; }
+    .grip {
+      height: 32px; display: flex; align-items: center; justify-content: flex-end;
+      cursor: grab; touch-action: none; padding: 0 6px;
+    }
+    .kill {
+      width: 32px; height: 28px; border: 0; background: transparent; color: inherit;
+      font: 18px/1 Georgia, serif; cursor: pointer;
+    }
+    textarea {
+      flex: 1; width: 100%; min-height: 112px; margin: 0; border: 0; resize: none;
+      background: transparent; padding: 0 12px 12px; outline: none;
+    }
+    .bar {
+      display: flex; flex-direction: column; gap: 6px;
+      padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+      background: #14120f; border-top: 1px solid #2c2822;
+    }
+    .row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    button, select { font: 16px/1 Georgia, serif; }
+    #newer {
+      background: #f85800; color: #1a0c00; border: 0; border-radius: 8px;
+      min-height: 40px; padding: 0 12px; font-weight: 700; cursor: pointer;
+    }
+    .sizes { display: flex; gap: 4px; }
+    .sizes button, .swatch {
+      min-width: 36px; min-height: 36px; border-radius: 8px; border: 2px solid transparent;
+      background: #221f1a; color: #f4efe6; cursor: pointer;
+    }
+    .sizes button.on, .swatch.on { border-color: #fffdf6; }
+    select {
+      flex: 1; min-width: 0; min-height: 40px; border-radius: 8px;
+      background: #221f1a; color: #f4efe6; border: 1px solid #3a342c; padding: 0 6px;
+    }
+    .dots { display: flex; gap: 5px; flex-wrap: wrap; }
+    .swatch { width: 32px; padding: 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1 class="brand">NOTE<b>PIN</b> BUTTER</h1>
+    <p class="status" id="status">Kept in this browser</p>
+  </header>
+  <div id="board"><div id="sheet"></div></div>
+  <div class="bar">
+    <div class="row">
+      <button type="button" id="newer">New</button>
+      <div class="sizes" id="sizes" role="group" aria-label="Text size"></div>
+      <select id="font" aria-label="Font"></select>
+    </div>
+    <div class="row">
+      <div class="dots" id="papers" role="group" aria-label="Paper"></div>
+      <div class="dots" id="inks" role="group" aria-label="Text color"></div>
+    </div>
+  </div>
+  <script>
+    const TOKEN = 14;
+    const LOOK = {"name":"BUTTER","paper":"yellow","ink":"plum","font":"serif","size":"s","tilt":1.2};
+    const PAPERS = {
+      orange: { bg: "#ff5c00", label: "Neon orange" },
+      pink: { bg: "#ff2f86", label: "Pink" },
+      yellow: { bg: "#ffe14a", label: "Yellow" },
+      green: { bg: "#c6ff3a", label: "Green" },
+      blush: { bg: "#ff8ec8", label: "Light pink" },
+      white: { bg: "#fffdf6", label: "White" }
+    };
+    const INKS = {
+      black: "#1a120c",
+      white: "#fffdf8",
+      orange: "#e23b00",
+      pink: "#d01268",
+      green: "#1c6b12",
+      plum: "#5a1240",
+      yellow: "#ffe14a"
+    };
+    const FONTS = {
+      serif: 'Georgia, "Times New Roman", serif',
+      sans: '"Trebuchet MS", Verdana, sans-serif',
+      mono: '"Courier New", Courier, monospace',
+      book: 'Palatino, "Palatino Linotype", Georgia, serif',
+      block: '"Arial Black", Impact, sans-serif',
+      plain: "Verdana, Geneva, sans-serif"
+    };
+    const FONT_LABEL = { serif: "Serif", sans: "Sans", mono: "Mono", book: "Book", block: "Block", plain: "Plain" };
+    const SIZES = { s: 16, m: 19, l: 23, xl: 28 };
+    const SIZE_LABEL = { s: "S", m: "M", l: "L", xl: "XL" };
+    const KEY = "nftz-notepin-" + TOKEN;
+    const sheet = document.getElementById("sheet");
+    const status = document.getElementById("status");
+    let notes = [];
+    let seq = 1;
+    let sheetH = 720;
+    let selected = "";
+    let defaults = { paper: LOOK.paper, ink: LOOK.ink, size: LOOK.size, font: LOOK.font };
+
+    function fresh(y) {
+      seq += 1;
+      return {
+        id: "n" + seq,
+        text: "",
+        x: notes.length % 2 ? 0.07 : 0.03,
+        y: y,
+        paper: defaults.paper,
+        ink: defaults.ink,
+        size: defaults.size,
+        font: defaults.font,
+        tilt: ((seq % 5) - 2) * 0.7,
+        z: seq
+      };
+    }
+
+    function load() {
+      try {
+        const raw = localStorage.getItem(KEY);
+        if (!raw) return false;
+        const data = JSON.parse(raw);
+        if (!data || !Array.isArray(data.notes)) return false;
+        notes = data.notes.filter(okNote).slice(0, 24);
+        seq = Number(data.seq) || notes.length + 1;
+        sheetH = Math.max(640, Number(data.sheet) || 720);
+        return notes.length > 0;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    function okNote(n) {
+      return n && typeof n.id === "string" && PAPERS[n.paper] && INKS[n.ink] && SIZES[n.size] && FONTS[n.font];
+    }
+
+    function save() {
+      try {
+        localStorage.setItem(KEY, JSON.stringify({ v: 1, seq: seq, sheet: sheetH, notes: notes }));
+        status.textContent = "Saved in this browser";
+      } catch (e) {
+        status.textContent = "This browser did not keep the note";
+      }
+    }
+
+    function grow(y) {
+      const need = y + 230;
+      if (need > sheetH) sheetH = need;
+      sheet.style.minHeight = sheetH + "px";
+    }
+
+    function place(el, note) {
+      const w = sheet.clientWidth || 320;
+      const noteW = Math.min(w * 0.88, 320);
+      const max = Math.max(8, w - noteW - 8);
+      const x = Math.max(8, Math.min(note.x * w, max));
+      el.style.left = x + "px";
+      el.style.top = note.y + "px";
+      el.style.zIndex = String(note.z || 1);
+      el.style.transform = "rotate(" + (note.tilt || 0) + "deg)";
+      el.style.background = PAPERS[note.paper].bg;
+      el.style.color = INKS[note.ink];
+      const area = el.querySelector("textarea");
+      area.style.fontFamily = FONTS[note.font];
+      area.style.fontSize = SIZES[note.size] + "px";
+      area.style.color = INKS[note.ink];
+    }
+
+    function paintBar() {
+      const note = notes.filter(function (n) { return n.id === selected; })[0];
+      const cur = note || defaults;
+      document.querySelectorAll("#papers .swatch").forEach(function (b) {
+        b.classList.toggle("on", b.dataset.paper === cur.paper);
+      });
+      document.querySelectorAll("#inks .swatch").forEach(function (b) {
+        b.classList.toggle("on", b.dataset.ink === cur.ink);
+      });
+      document.querySelectorAll("#sizes button").forEach(function (b) {
+        b.classList.toggle("on", b.dataset.size === cur.size);
+      });
+      document.getElementById("font").value = cur.font;
+    }
+
+    function setField(key, value) {
+      const note = notes.filter(function (n) { return n.id === selected; })[0];
+      if (note) {
+        note[key] = value;
+        const el = sheet.querySelector('[data-id="' + note.id + '"]');
+        if (el) place(el, note);
+        save();
+      } else {
+        defaults[key] = value;
+      }
+      paintBar();
+    }
+
+    function select(id) {
+      selected = id;
+      notes.forEach(function (n) {
+        if (n.id === id) n.z = ++seq;
+      });
+      sheet.querySelectorAll(".note").forEach(function (el) {
+        el.classList.toggle("on", el.dataset.id === id);
+        const note = notes.filter(function (n) { return n.id === el.dataset.id; })[0];
+        if (note) el.style.zIndex = String(note.z || 1);
+      });
+      paintBar();
+    }
+
+    function mount(note) {
+      const el = document.createElement("article");
+      el.className = "note";
+      el.dataset.id = note.id;
+      const grip = document.createElement("div");
+      grip.className = "grip";
+      const kill = document.createElement("button");
+      kill.type = "button";
+      kill.className = "kill";
+      kill.setAttribute("aria-label", "Remove note");
+      kill.textContent = "\u00d7";
+      grip.appendChild(kill);
+      const area = document.createElement("textarea");
+      area.setAttribute("aria-label", "Note");
+      area.placeholder = "Write it down.";
+      area.value = note.text || "";
+      el.appendChild(grip);
+      el.appendChild(area);
+      sheet.appendChild(el);
+      grow(note.y);
+      place(el, note);
+      area.addEventListener("focus", function () { select(note.id); });
+      area.addEventListener("input", function () {
+        note.text = area.value.slice(0, 2000);
+        save();
+      });
+      kill.addEventListener("click", function () {
+        notes = notes.filter(function (n) { return n.id !== note.id; });
+        if (selected === note.id) selected = "";
+        el.remove();
+        save();
+        paintBar();
+      });
+      grip.addEventListener("pointerdown", function (e) {
+        if (e.target === kill) return;
+        select(note.id);
+        grip.setPointerCapture(e.pointerId);
+        const origin = { px: e.clientX, py: e.clientY, x: note.x, y: note.y };
+        function move(ev) {
+          const w = sheet.clientWidth || 320;
+          const nx = origin.x * w + (ev.clientX - origin.px);
+          const ny = origin.y + (ev.clientY - origin.py);
+          note.x = Math.max(0, nx / w);
+          note.y = Math.max(0, ny);
+          grow(note.y);
+          place(el, note);
+        }
+        function up() {
+          grip.removeEventListener("pointermove", move);
+          grip.removeEventListener("pointerup", up);
+          save();
+        }
+        grip.addEventListener("pointermove", move);
+        grip.addEventListener("pointerup", up);
+      });
+      return el;
+    }
+
+    function bootBar() {
+      const sizes = document.getElementById("sizes");
+      Object.keys(SIZES).forEach(function (key) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.dataset.size = key;
+        b.textContent = SIZE_LABEL[key];
+        b.addEventListener("click", function () { setField("size", key); });
+        sizes.appendChild(b);
+      });
+      const font = document.getElementById("font");
+      Object.keys(FONTS).forEach(function (key) {
+        const opt = document.createElement("option");
+        opt.value = key;
+        opt.textContent = FONT_LABEL[key];
+        font.appendChild(opt);
+      });
+      font.addEventListener("change", function () { setField("font", font.value); });
+      const papers = document.getElementById("papers");
+      Object.keys(PAPERS).forEach(function (key) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "swatch";
+        b.dataset.paper = key;
+        b.style.background = PAPERS[key].bg;
+        b.setAttribute("aria-label", PAPERS[key].label);
+        b.addEventListener("click", function () { setField("paper", key); });
+        papers.appendChild(b);
+      });
+      const inks = document.getElementById("inks");
+      Object.keys(INKS).forEach(function (key) {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "swatch";
+        b.dataset.ink = key;
+        b.style.background = INKS[key].bg ? INKS[key].bg : INKS[key];
+        b.setAttribute("aria-label", key);
+        b.addEventListener("click", function () { setField("ink", key); });
+        inks.appendChild(b);
+      });
+      document.getElementById("newer").addEventListener("click", function () {
+        const cur = notes.filter(function (n) { return n.id === selected; })[0];
+        if (cur) {
+          defaults.paper = cur.paper;
+          defaults.ink = cur.ink;
+          defaults.size = cur.size;
+          defaults.font = cur.font;
+        }
+        const y = notes.reduce(function (m, n) { return Math.max(m, n.y); }, 0);
+        const note = fresh(notes.length ? y + 156 : 16);
+        note.text = "";
+        notes.push(note);
+        mount(note);
+        select(note.id);
+        const area = sheet.querySelector('[data-id="' + note.id + '"] textarea');
+        if (area) area.focus();
+        save();
+      });
+      sheet.addEventListener("pointerdown", function (e) {
+        if (e.target === sheet) {
+          selected = "";
+          sheet.querySelectorAll(".note").forEach(function (el) { el.classList.remove("on"); });
+          paintBar();
+        }
+      });
+    }
+
+    bootBar();
+    if (!load()) {
+      const note = fresh(16);
+      note.text = "Write it down.";
+      note.paper = LOOK.paper;
+      note.ink = LOOK.ink;
+      note.size = LOOK.size;
+      note.font = LOOK.font;
+      note.tilt = LOOK.tilt;
+      notes = [note];
+    }
+    sheet.style.minHeight = sheetH + "px";
+    notes.forEach(mount);
+    if (notes[0]) select(notes[0].id);
+    window.addEventListener("resize", function () {
+      sheet.querySelectorAll(".note").forEach(function (el) {
+        const note = notes.filter(function (n) { return n.id === el.dataset.id; })[0];
+        if (note) place(el, note);
+      });
+    });
+  </script>
+</body>
+</html>
